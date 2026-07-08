@@ -1,0 +1,17 @@
+name: Daily Trend Article Generation
+
+on:
+  schedule:
+    # 毎日 日本時間の朝9:00（UTC 0:00）に自動実行
+    - cron: '0 0 * * *'
+  # GitHubの画面から手動でいつでも実行できるようにするボタンを追加
+  workflow_dispatch:
+
+jobs:
+  cron:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Call Trend Trigger API
+        run: |
+          curl -X GET "https://あなたのVercelのドメイン.vercel.app/api/cron" \
+          -H "Authorization: Bearer ${{ secrets.CRON_SECRET }}"
