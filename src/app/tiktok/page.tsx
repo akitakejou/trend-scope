@@ -8,7 +8,7 @@ export default async function TikTokPage() {
     .from("articles")
     .select("*")
     .ilike("category", "%TikTok%")
-    .order("date", { ascending: false });
+    .order("id", { ascending: false });
 
   return (
     <main className="max-w-4xl mx-auto p-6 md:p-12 min-h-screen">

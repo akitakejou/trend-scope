@@ -7,7 +7,7 @@ export default async function Home() {
   const { data: articles } = await supabase
     .from("articles")
     .select("*")
-    .order("date", { ascending: false });
+    .order("id", { ascending: false });
 
   return (
     <main className="min-h-screen p-8">

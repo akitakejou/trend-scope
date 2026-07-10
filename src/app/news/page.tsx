@@ -11,7 +11,7 @@ export default async function NewsPage() {
     .not("category", "ilike", "%tiktok%")
     .not("category", "ilike", "%youtube%")
     .not("category", "ilike", "%x%")
-    .order("date", { ascending: false });
+    .order("id", { ascending: false });
 
   return (
     <main className="max-w-4xl mx-auto p-6 md:p-12 min-h-screen">
