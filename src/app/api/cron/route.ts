@@ -162,6 +162,31 @@ export async function GET(request: Request) {
 
       const articleData = JSON.parse(responseText);
 
+      // --- 📸 【追加】キーワードに合うフリー画像を自動でネットから拾う仕組み ---
+      let searchKeyword = "news"; // デフォルトの検索ワード
+      const lowerCat = articleData.category?.toLowerCase() || "";
+
+      // カテゴリやチャンネルのIDに応じて、画像検索用の英語キーワードを自動決定
+      if (lowerCat.includes("gadget") || selectedChannel.id === "audio_gadget") {
+        searchKeyword = "audio,headphones,tech"; // オーディオ・ガジェット系
+      } else if (lowerCat.includes("youtube") || selectedChannel.id === "youtube_gaming") {
+        searchKeyword = "gaming,streamer"; // ゲーム・配信系
+      } else if (lowerCat.includes("tiktok")) {
+        searchKeyword = "smartphone,tiktok"; // スマホ・TikTok系
+      } else if (lowerCat.includes("x") || lowerCat.includes("twitter")) {
+        searchKeyword = "socialmedia,network"; // SNS系
+      } else if (selectedChannel.id === "gourmet_ramen") {
+        searchKeyword = "ramen,japanese-food"; // ラーメン・グルメ系
+      } else if (lowerCat.includes("ai") || lowerCat.includes("software")) {
+        searchKeyword = "coding,cyberpunk"; // 開発・AI系
+      }
+
+      // Unsplashの無料高画質画像ソースから、横長(1200x630)の画像をランダムに自動取得するURL
+      // 末尾にランダムな数値を混ぜることで、毎回違う画像が選ばれるようにします
+      const randomNumber = Math.floor(Math.random() * 1000);
+      const categoryImage = `https://images.unsplash.com/photo-1516321318423-f06f85e504b3?auto=format&fit=crop&w=1200&h=630&q=80&sig=${randomNumber}&keywords=${encodeURIComponent(searchKeyword)}`;
+      // -----------------------------------------------------------------
+
       const allowedCategories = ["TikTok", "YouTube", "X", "Software", "AI", "Gadget", "Business"];
       let finalCategory = allowedCategories.includes(articleData.category)
         ? articleData.category
@@ -179,7 +204,7 @@ export async function GET(request: Request) {
           {
             title: articleData.title,
             category: finalCategory,
-            image: '/images/news.jpg',
+            image: 'categoryImage',
             summary: articleData.summary,
             content: articleData.content,
             analysis: articleData.analysis,
