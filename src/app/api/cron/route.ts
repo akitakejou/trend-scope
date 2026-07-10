@@ -130,13 +130,15 @@ export async function GET(request: Request) {
 `;
 
       console.log(`[Cron] Gemini APIで記事を生成中（Web検索裏取り機能を有効化）...`);
+      console.log(`[Cron] Gemini APIで記事を生成中（Web検索裏取り機能を有効化）...`);
       const response = await ai.models.generateContent({
         model: 'gemini-2.5-flash',
         contents: `以下のトピックと、付属する参考情報をベースに、必要に応じてGoogle検索で最新の事実関係を裏取りした上で記事を生成してください。\n\n対象トピック: ${finalTopic}\n参考テキスト:\n${contextSnippet}`,
         config: {
           systemInstruction: systemInstruction,
-          // 【対策③】Google検索（グラウンディング）機能を強制有効化！
+          // 🌐 Google検索ツールを有効化
           tools: [{ googleSearch: {} }], 
+          // ⚠️ 【重要】新しいSDKで検索とJSONを両立させる正しい設定項目
           responseMimeType: 'application/json',
           responseSchema: {
             type: Type.OBJECT,
@@ -154,11 +156,13 @@ export async function GET(request: Request) {
         },
       });
 
-      const responseText = response.text;
+      let responseText = response.text;
       if (!responseText) {
         console.error(`[Cron Error] Geminiからのレスポンスが空でした。`);
         continue;
       }
+
+      responseText = responseText.replace(/```json|```/g, "").trim();
 
       const articleData = JSON.parse(responseText);
 
@@ -204,7 +208,7 @@ export async function GET(request: Request) {
           {
             title: articleData.title,
             category: finalCategory,
-            image: 'categoryImage',
+            image: categoryImage,
             summary: articleData.summary,
             content: articleData.content,
             analysis: articleData.analysis,
