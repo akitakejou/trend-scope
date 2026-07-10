@@ -6,7 +6,6 @@ import { getSupabaseAdminClient } from "@/utils/supabaseServer";
 const parser = new Parser();
 const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
 
-// 収集元のチャンネルを定義（YouTubeはAPI経由、その他はRSSから取得）
 const NEWS_CHANNELS = [
   {
     id: "software",
@@ -23,7 +22,7 @@ const NEWS_CHANNELS = [
   {
     id: "youtube_tiktok",
     name: "本物のYouTube急上昇 ＆ TikTokトレンド枠",
-    url: "", // YouTubeはAPIを使うため空欄
+    url: "", 
     fallbackCategory: "YouTube"
   },
   {
@@ -47,52 +46,50 @@ export async function GET(request: Request) {
   const results = [];
   const supabase = getSupabaseAdminClient();
 
-  // 4つの情報源を順番にループ処理
   for (const selectedChannel of NEWS_CHANNELS) {
     try {
       console.log(`[Cron] ---------------------------------------------`);
       console.log(`[Cron] ターゲット情報源を処理中: ${selectedChannel.name}`);
       
       let finalTopic = "最新のトレンド動向";
+      let contextSnippet = ""; // 【対策①】ニュースの「概要・本文の一部」を格納する変数
       let sourceUrl = "https://news.yahoo.co.jp";
 
-      // 🔴 YouTubeの枠だけ処理を切り替える
       if (selectedChannel.id === "youtube_tiktok") {
         console.log(`[Cron] YouTube APIから日本の急上昇動画を取得中...`);
         const apiKey = process.env.YOUTUBE_API_KEY;
-        
-        // 日本(JP)の急上昇動画(mostPopular)を最大10件取得するURL
         const ytUrl = `https://www.googleapis.com/youtube/v3/videos?part=snippet&chart=mostPopular&regionCode=JP&maxResults=10&key=${apiKey}`;
         
         const ytRes = await fetch(ytUrl);
         const ytData = await ytRes.json();
 
         if (!ytData.items || ytData.items.length === 0) {
-          console.error(`[Cron Error] YouTubeデータの取得に失敗しました。理由:`, ytData.error?.message || "データが空です");
-          continue; // 失敗したらこの枠はスキップ
+          console.error(`[Cron Error] YouTubeデータの取得に失敗しました。`);
+          continue;
         }
 
-        // 上位10件からランダムに1つの動画タイトルをピックアップ
         const randomVideo = ytData.items[Math.floor(Math.random() * ytData.items.length)];
         finalTopic = randomVideo.snippet.title;
-        sourceUrl = `https://www.youtube.com/watch?v={randomVideo.id}`;
-        console.log(`[Cron] YouTube急上昇からトピックを決定: "${finalTopic}"`);
+        // YouTubeの場合は、動画の説明文（description）やチャンネル名をコンテキストとしてAIに渡す
+        contextSnippet = `チャンネル名: ${randomVideo.snippet.channelTitle}\n動画説明文: ${randomVideo.snippet.description || ""}`;
+        sourceUrl = `https://www.youtube.com/watch?v=${randomVideo.id}`;
+        console.log(`[Cron] YouTubeからトピック決定: "${finalTopic}"`);
 
       } else {
-        // 🔵 通常のヤフーRSSの処理
         console.log(`[Cron] RSSフィードを取得中: ${selectedChannel.url}`);
         const feed = await parser.parseURL(selectedChannel.url!);
         
         if (!feed.items || feed.items.length === 0) {
-          console.error(`[Cron Error] ${selectedChannel.name} のRSS取得に失敗しました。`);
+          console.error(`[Cron Error] RSS取得に失敗しました。`);
           continue;
         }
 
         const randomItem = feed.items[Math.floor(Math.random() * Math.min(feed.items.length, 10))];
         const rawTopic = randomItem.title || "";
+        // 【対策①】RSSに用意されている記事の概要（Snippet）をしっかり取得
+        contextSnippet = randomItem.contentSnippet || randomItem.content || "";
         sourceUrl = randomItem.link || 'https://news.yahoo.co.jp';
 
-        // ノイズ掃除
         finalTopic = rawTopic
           .replace(/\s（.+）$/, "")
           .replace(/\s-\s.+$/, "")
@@ -102,43 +99,44 @@ export async function GET(request: Request) {
           .trim();
       }
 
-      // Gemini APIで記事を生成（以前追加したTikTok/YouTube最強プロンプト）
+      // 【対策②】プロンプトでの「嘘・妄想禁止」を極限まで強化
       const systemInstruction = `
-あなたはIT・テクノロジー、および各種SNS（X、TikTok、YouTube）の最新トレンドに精通した、神がかったセンスを持つシニアWebライターです。
-与えられたニュース（トピック）について、背景にあるネット上の反響や、「もしこれが各SNSで発信されたらどう広がるか」のシミュレーションを含めた高品質なニュース記事を日本語で執筆してください。
+あなたはIT・テクノロジー、および各種SNSの最新トレンドに精通した、事実を歪めない極めて誠実なシニアWebライターです。
+与えられたニュースや動画について、背景にあるネット上の反響を反映した高品質なニュース記事を日本語で執筆してください。
+
+【⚠️絶対に守るべきハルシネーション（虚偽情報）対策ルール】
+1. 与えられたトピックと参考テキスト、およびあなた自身が「Google検索機能」を使って裏取りした確定事実のみをベースに執筆してください。
+2. 元のデータや検索結果に存在しない「製品のスペック、具体的な価格、発売日、イベントの開催地、人物の年齢・発言」などを絶対に妄想で捏造・創作してはなりません。
+3. 情報を検索してもどうしても事実が確認できない部分、またはデータが不足している部分については、嘘をついて埋めるのではなく、「現時点で詳細なスペックは公開されていませんが」「今後の公式発表が待たれます」のように、正直に「不明であること」を文章内に明記してください。
 
 【カテゴリ判定・執筆の鉄則】
-トピックの内容を分析し、最も適したカテゴリを [TikTok, YouTube, X, Software, AI, Gadget, Business] から「必ず1つだけ」正確に選定してください。
+トピックの内容を分析し、最も適したカテゴリを [TikTok, YouTube, X, Software, AI, Gadget, Business] から1つ選定してください。
 
-■ TikTok カテゴリが選ばれた場合のシミュレーションルール:
-- ニュースをそのまま伝えるのではなく、「TikTokのトレンド音源（BGM）に乗せて、背景動画付きで15秒〜30秒のテキスト解説や『〇〇な人、終わる…』といった強いフックで拡散されている様子」をシミュレーションして執筆してください。
-- コメント欄でユーザーたちが「大喜利」をはじめたり、共感・ツッコミで1万件以上のコメントが殺到しているようなネットのリアクション（「これマジ？」「私の青春が終わった」など）を反映させてください。
-- 「#〇〇」「#おすすめにのりたい」「#トレンド」といった、TikTok特有のバズハッシュタグの動きも本文や分析に織り交ぜてください。
-
-■ YouTube / YouTubeショート カテゴリが選ばれた場合のシミュレーションルール:
-- 「【衝撃】〇〇の裏側がヤバすぎる…」のような、YouTube特有の考察系動画、解説動画、またはVTuberや配信者が生配信（雑談）でこのニュースに触れてリスナーとチャットで盛り上がっている様子をシミュレーションしてください。
-- 本文には、動画の「切り抜き動画」が拡散されている背景や、登録者数数十万人の解説チャンネルが急遽動画をアップして急上昇ランク入りしているような臨場感を演出してください。
-
-■ X カテゴリが選ばれた場合のシミュレーションルール:
-- インプレッション目的のポストの乱立や、深夜のトレンド1位獲得、10万いいねを超えるバズポストの文体、リプライ欄での激しい議論やユーモアあるツッコミなどのカオスな状況をリアルに描写してください。
+■ 各SNSカテゴリのシミュレーションルール:
+（※SNSでの盛り上がり方をシミュレーションする際も、ニュース自体の「事実関係」は絶対に捏造しないでください）
+- TikTok: 縦型動画での拡散傾向、コメント欄の大喜利や共感の声（「これマジ？」「私の青春が終わった」など）、ハッシュタグの動きを解説。
+- YouTube: 考察系・解説動画の乱立、配信者が生配信で触れてチャットが盛り上がっている様子、切り抜き動画の拡散背景を解説。
+- X: 深夜のトレンド1位獲得、バズポストの文体、リプライ欄での議論やユーモアあるツッコミなどの状況をリアルに描写。
 
 【共通の構成ルール】
-1. タイトル: ユーザーの検索意図に沿った、クリックされやすくSEOを意識した、少しSNSで引きのあるタイトル。
-2. 要約（summary）: 記事の核心を突いた200文字以上500文字以内の概要。
-3. 本文（content）: 世間のリアクションや、上記の各SNSでの「疑似的なバズ・拡散状況」を詳細に解説した1000文字以上3000文字以内の本文。
-4. 分析（analysis）: AIの視点から、このトレンドが今後のショート動画界隈やSNSカルチャーにどのような変化（新しいミームの誕生など）をもたらすかの深掘り分析。
+1. タイトル: 検索意図に沿った、クリックされやすく少しSNSで引きのあるタイトル。
+2. 要約（summary）: 記事の核心を突いた200文字以上500文字以内の正確な概要。
+3. 本文（content）: 事実に基づいた背景と、上記の各SNSでの「疑似的なバズ・拡散状況」を詳細に解説した1000文字以上3000文字以内の本文。
+4. 分析（analysis）: AIの視点から、このトレンドが今後のSNSカルチャーにもたらす変化の深掘り分析。
 5. メリット（pros）: このトレンドのポジティブな影響や面白さを3個。
 6. デメリット（cons）: 懸念点、課題、ネット上の否定的な意見などを3個。
 7. 注意文: 本文（content）の最後には必ず以下の注意文を独立した段落として含めてください。
 「※この記事はAIが公開情報をもとに生成したものです。最新情報は公式サイトをご確認ください。」
 `;
 
-      console.log(`[Cron] Gemini APIで記事を生成中...`);
+      console.log(`[Cron] Gemini APIで記事を生成中（Web検索裏取り機能を有効化）...`);
       const response = await ai.models.generateContent({
         model: 'gemini-2.5-flash',
-        contents: `以下のトピック情報をもとに、適切なカテゴリを選択して記事を生成してください。\n対象トピック: ${finalTopic}`,
+        contents: `以下のトピックと、付属する参考情報をベースに、必要に応じてGoogle検索で最新の事実関係を裏取りした上で記事を生成してください。\n\n対象トピック: ${finalTopic}\n参考テキスト:\n${contextSnippet}`,
         config: {
           systemInstruction: systemInstruction,
+          // 【対策③】Google検索（グラウンディング）機能を強制有効化！
+          tools: [{ googleSearch: {} }], 
           responseMimeType: 'application/json',
           responseSchema: {
             type: Type.OBJECT,
@@ -164,13 +162,11 @@ export async function GET(request: Request) {
 
       const articleData = JSON.parse(responseText);
 
-      // カテゴリのガード、およびYouTube枠の強制シャッフル
       const allowedCategories = ["TikTok", "YouTube", "X", "Software", "AI", "Gadget", "Business"];
       let finalCategory = allowedCategories.includes(articleData.category)
         ? articleData.category
         : selectedChannel.fallbackCategory;
 
-      // 🔴 YouTube枠から生まれた記事なら、確実にYouTubeかTikTokのカテゴリにする
       if (selectedChannel.id === "youtube_tiktok") {
         finalCategory = Math.random() > 0.5 ? "YouTube" : "TikTok";
       }
@@ -217,7 +213,7 @@ export async function GET(request: Request) {
 
   return NextResponse.json({
     success: true,
-    message: "YouTube API連携版・一括処理が完了しました。",
+    message: "ハルシネーション対策・Google検索連動版の一括処理が完了しました。",
     processedCount: results.length,
     details: results
   });
