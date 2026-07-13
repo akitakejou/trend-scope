@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import Parser from "rss-parser";
-import { GoogleGenAI, Type } from "@google/genai";
+import { GoogleGenAI } from "@google/genai";
 import { getSupabaseAdminClient } from "@/utils/supabaseServer";
 
 const parser = new Parser();
@@ -52,7 +52,7 @@ export async function GET(request: Request) {
       console.log(`[Cron] ターゲット情報源を処理中: ${selectedChannel.name}`);
       
       let finalTopic = "最新のトレンド動向";
-      let contextSnippet = ""; // 【対策①】ニュースの「概要・本文の一部」を格納する変数
+      let contextSnippet = "";
       let sourceUrl = "https://news.yahoo.co.jp";
 
       if (selectedChannel.id === "youtube_tiktok") {
@@ -70,7 +70,6 @@ export async function GET(request: Request) {
 
         const randomVideo = ytData.items[Math.floor(Math.random() * ytData.items.length)];
         finalTopic = randomVideo.snippet.title;
-        // YouTubeの場合は、動画の説明文（description）やチャンネル名をコンテキストとしてAIに渡す
         contextSnippet = `チャンネル名: ${randomVideo.snippet.channelTitle}\n動画説明文: ${randomVideo.snippet.description || ""}`;
         sourceUrl = `https://www.youtube.com/watch?v=${randomVideo.id}`;
         console.log(`[Cron] YouTubeからトピック決定: "${finalTopic}"`);
@@ -86,7 +85,6 @@ export async function GET(request: Request) {
 
         const randomItem = feed.items[Math.floor(Math.random() * Math.min(feed.items.length, 10))];
         const rawTopic = randomItem.title || "";
-        // 【対策①】RSSに用意されている記事の概要（Snippet）をしっかり取得
         contextSnippet = randomItem.contentSnippet || randomItem.content || "";
         sourceUrl = randomItem.link || 'https://news.yahoo.co.jp';
 
@@ -99,7 +97,6 @@ export async function GET(request: Request) {
           .trim();
       }
 
-      // 【対策②】プロンプトでの「嘘・妄想禁止」を極限まで強化
       const systemInstruction = `
 あなたはIT・テクノロジー、および各種SNSの最新トレンドに精通した、事実を歪めない極めて誠実なシニアWebライターです。
 与えられたニュースや動画について、背景にあるネット上の反響を反映した高品質なニュース記事を日本語で執筆してください。
@@ -112,24 +109,30 @@ export async function GET(request: Request) {
 【カテゴリ判定・執筆の鉄則】
 トピックの内容を分析し、最も適したカテゴリを [TikTok, YouTube, X, Software, AI, Gadget, Business] から1つ選定してください。
 
-■ 各SNSカテゴリのシミュレーションルール:
-（※SNSでの盛り上がり方をシミュレーションする際も、ニュース自体の「事実関係」は絶対に捏造しないでください）
-- TikTok: 縦型動画での拡散傾向、コメント欄の大喜利や共感の声（「これマジ？」「私の青春が終わった」など）、ハッシュタグの動きを解説。
-- YouTube: 考察系・解説動画の乱立、配信者が生配信で触れてチャットが盛り上がっている様子、切り抜き動画の拡散背景を解説。
-- X: 深夜のトレンド1位獲得、バズポストの文体、リプライ欄での議論やユーモアあるツッコミなどの状況をリアルに描写。
-
 【共通の構成ルール】
-1. タイトル: 検索意図に沿った、クリックされやすく少しSNSで引きのあるタイトル。
+1. タイトル: クリックされやすく少しSNSで引きのあるタイトル。
 2. 要約（summary）: 記事の核心を突いた200文字以上500文字以内の正確な概要。
-3. 本文（content）: 事実に基づいた背景と、上記の各SNSでの「疑似的なバズ・拡散状況」を詳細に解説した1000文字以上3000文字以内の本文。
+3. 本文（content）: 事実に基づいた背景と、各SNSでの「疑似的なバズ・拡散状況」を詳細に解説した1000文字以上3000文字以内の本文。最後には必ず独立した段落として「※この記事はAIが公開情報をもとに生成したものです。最新情報は公式サイトをご確認ください。」を含めてください。
 4. 分析（analysis）: AIの視点から、このトレンドが今後のSNSカルチャーにもたらす変化の深掘り分析。
-5. メリット（pros）: このトレンドのポジティブな影響や面白さを3個。
-6. デメリット（cons）: 懸念点、課題、ネット上の否定的な意見などを3個。
-7. 注意文: 本文（content）の最後には必ず以下の注意文を独立した段落として含めてください。
-「※この記事はAIが公開情報をもとに生成したものです。最新情報は公式サイトをご確認ください。」
+5. メリット（pros）: このトレンドのポジティブな影響や面白さを3個の配列。
+6. デメリット（cons）: 懸念点、課題、ネット上の否定的な意見などを3個の配列。
+
+【⚠️出力形式に関する絶対遵守ルール】
+あなたは必ず、以下のキーを持つ有効な単一のJSONオブジェクトのみを出力してください。
+挨拶文、マークダウン記号（\`\`\`jsonなど）、前後の解説は一切出力してはなりません。純粋なJSON文字列だけを返してください。
+
+JSONの構成オブジェクト例:
+{
+  "title": "記事タイトル文字列",
+  "category": "指定カテゴリのいずれか",
+  "summary": "要約文字列",
+  "content": "本文文字列",
+  "analysis": "分析文字列",
+  "pros": ["メリット1", "メリット2", "メリット3"],
+  "cons": ["デメリット1", "デメリット2", "デメリット3"]
+}
 `;
 
-      console.log(`[Cron] Gemini APIで記事を生成中（Web検索裏取り機能を有効化）...`);
       console.log(`[Cron] Gemini APIで記事を生成中（Web検索裏取り機能を有効化）...`);
       const response = await ai.models.generateContent({
         model: 'gemini-2.5-flash',
@@ -137,22 +140,8 @@ export async function GET(request: Request) {
         config: {
           systemInstruction: systemInstruction,
           // 🌐 Google検索ツールを有効化
-          tools: [{ googleSearch: {} }], 
-          // ⚠️ 【重要】新しいSDKで検索とJSONを両立させる正しい設定項目
-          responseMimeType: 'application/json',
-          responseSchema: {
-            type: Type.OBJECT,
-            properties: {
-              title: { type: Type.STRING },
-              category: { type: Type.STRING },
-              summary: { type: Type.STRING },
-              content: { type: Type.STRING },
-              analysis: { type: Type.STRING },
-              pros: { type: Type.ARRAY, items: { type: Type.STRING } },
-              cons: { type: Type.ARRAY, items: { type: Type.STRING } },
-            },
-            required: ['title', 'category', 'summary', 'content', 'analysis', 'pros', 'cons'],
-          },
+          tools: [{ googleSearch: {} }]
+          // 💡 エラー回避のため、ここでの mimeType 指定と schema 指定は完全に削除しました
         },
       });
 
@@ -162,34 +151,36 @@ export async function GET(request: Request) {
         continue;
       }
 
-      responseText = responseText.replace(/```json|```/g, "").trim();
+      // 🧹 【安全装置】もしGeminiが ```json ... ``` で囲って返してきた場合に中身だけを抽出する
+      const jsonMatch = responseText.match(/\{[\s\S]*\}/);
+      if (!jsonMatch) {
+        console.error(`[Cron Error] レスポンスからJSON形式のオブジェクトを抽出できませんでした。`);
+        continue;
+      }
+      responseText = jsonMatch[0];
 
       const articleData = JSON.parse(responseText);
 
-      // --- 📸 【追加】キーワードに合うフリー画像を自動でネットから拾う仕組み ---
-      let searchKeyword = "news"; // デフォルトの検索ワード
+      // --- 📸 キーワードに合うフリー画像を自動でネットから拾う仕組み ---
+      let searchKeyword = "news";
       const lowerCat = articleData.category?.toLowerCase() || "";
 
-      // カテゴリやチャンネルのIDに応じて、画像検索用の英語キーワードを自動決定
       if (lowerCat.includes("gadget") || selectedChannel.id === "audio_gadget") {
-        searchKeyword = "audio,headphones,tech"; // オーディオ・ガジェット系
+        searchKeyword = "audio,headphones,tech";
       } else if (lowerCat.includes("youtube") || selectedChannel.id === "youtube_gaming") {
-        searchKeyword = "gaming,streamer"; // ゲーム・配信系
+        searchKeyword = "gaming,streamer";
       } else if (lowerCat.includes("tiktok")) {
-        searchKeyword = "smartphone,tiktok"; // スマホ・TikTok系
+        searchKeyword = "smartphone,tiktok";
       } else if (lowerCat.includes("x") || lowerCat.includes("twitter")) {
-        searchKeyword = "socialmedia,network"; // SNS系
+        searchKeyword = "socialmedia,network";
       } else if (selectedChannel.id === "gourmet_ramen") {
-        searchKeyword = "ramen,japanese-food"; // ラーメン・グルメ系
+        searchKeyword = "ramen,japanese-food";
       } else if (lowerCat.includes("ai") || lowerCat.includes("software")) {
-        searchKeyword = "coding,cyberpunk"; // 開発・AI系
+        searchKeyword = "coding,cyberpunk";
       }
 
-      // Unsplashの無料高画質画像ソースから、横長(1200x630)の画像をランダムに自動取得するURL
-      // 末尾にランダムな数値を混ぜることで、毎回違う画像が選ばれるようにします
       const randomNumber = Math.floor(Math.random() * 1000);
       const categoryImage = `https://images.unsplash.com/photo-1516321318423-f06f85e504b3?auto=format&fit=crop&w=1200&h=630&q=80&sig=${randomNumber}&keywords=${encodeURIComponent(searchKeyword)}`;
-      // -----------------------------------------------------------------
 
       const allowedCategories = ["TikTok", "YouTube", "X", "Software", "AI", "Gadget", "Business"];
       let finalCategory = allowedCategories.includes(articleData.category)
