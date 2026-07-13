@@ -1,0 +1,9 @@
+ウェブサイトの閲覧方法
+powershell
+cd C:\Users\class\Desktop\trend-scope
+起動
+npm run dev
+表示
+http://localhost:3000
+記事更新用
+http://localhost:3000/api/cron
